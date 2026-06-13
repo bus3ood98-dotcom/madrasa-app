@@ -48,7 +48,7 @@ export default function StudentProfilePage() {
 
   if (!student) return <p className="text-center text-navy/60">جاري التحميل...</p>;
 
-  const maxTotal = Math.max(...history.map((h) => h.total_after), student.total_points, 1);
+  const maxTotal = Math.max(...history.map((h) => h.points), student.total_points, 1);
 
   return (
     <div className="space-y-6">
@@ -115,8 +115,8 @@ export default function StudentProfilePage() {
               <div
                 key={h.id}
                 className="flex-1 rounded-t bg-gradient-to-t from-teal to-gold transition-all"
-                style={{ height: `${(h.total_after / maxTotal) * 100}%` }}
-                title={`${h.total_after} نقطة - ${new Date(h.created_at).toLocaleDateString("ar-SA")}`}
+                style={{ height: `${(h.points / maxTotal) * 100}%` }}
+                title={`${h.points} نقطة - ${new Date(h.created_at).toLocaleDateString("ar-SA")}`}
               />
             ))}
           </div>
