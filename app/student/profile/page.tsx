@@ -116,7 +116,7 @@ export default function StudentProfilePage() {
                 key={h.id}
                 className="flex-1 rounded-t bg-gradient-to-t from-teal to-gold transition-all"
                 style={{ height: `${(h.points / maxTotal) * 100}%` }}
-                title={`${h.points} نقطة - ${new Date(h.created_at).toLocaleDateString("ar-SA")}`}
+                title={`${h.points} نقطة`}
               />
             ))}
           </div>
