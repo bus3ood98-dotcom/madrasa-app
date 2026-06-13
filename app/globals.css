@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-lalezar: "Lalezar";
+  --font-tajawal: "Tajawal";
+}
+
+body {
+  background-image: radial-gradient(circle at 1px 1px, rgba(15,110,95,0.07) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.focus-ring {
+  @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal;
+}
+
+/* زخرفة نجمية إسلامية بسيطة (8 رؤوس) كخلفية مزخرفة */
+.star-motif {
+  position: relative;
+}
+.star-motif::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.06;
+  background-image:
+    repeating-linear-gradient(45deg, #0F6E5F 0 2px, transparent 2px 40px),
+    repeating-linear-gradient(-45deg, #0F6E5F 0 2px, transparent 2px 40px);
+  pointer-events: none;
+}
