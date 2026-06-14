@@ -9,18 +9,21 @@ interface TaskWithProgress extends Task {
   done: number;
 }
 
+const emptyForm = {
+  title: "",
+  description: "",
+  points: "10",
+  due_date: "",
+  task_type: "once" as TaskType,
+  duration_days: "7",
+};
+
 export default function TeacherTasksPage() {
   const [tasks, setTasks] = useState<TaskWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    title: "",
-    description: "",
-    points: "10",
-    due_date: "",
-    task_type: "once" as TaskType,
-    duration_days: "7",
-  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState(emptyForm);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -44,6 +47,37 @@ export default function TeacherTasksPage() {
 
     setTasks(withProgress);
     setLoading(false);
+  }
+
+  function openAddForm() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setImageFile(null);
+    setError("");
+    setShowForm(true);
+  }
+
+  function openEditForm(t: Task) {
+    setEditingId(t.id);
+    setForm({
+      title: t.title,
+      description: t.description,
+      points: String(t.points),
+      due_date: t.task_type === "once" ? t.due_date : "",
+      task_type: t.task_type,
+      duration_days: String(t.duration_days ?? 7),
+    });
+    setImageFile(null);
+    setError("");
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm(emptyForm);
+    setImageFile(null);
+    setError("");
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -85,27 +119,39 @@ export default function TeacherTasksPage() {
     let durationDays: number | null = null;
     if (form.task_type === "daily") {
       durationDays = parseInt(form.duration_days);
-      const d = new Date();
-      d.setDate(d.getDate() + durationDays);
-      dueDate = d.toISOString().split("T")[0];
+      if (!editingId) {
+        const d = new Date();
+        d.setDate(d.getDate() + durationDays);
+        dueDate = d.toISOString().split("T")[0];
+      } else {
+        const existing = tasks.find((t) => t.id === editingId);
+        dueDate = existing?.due_date ?? dueDate;
+      }
     }
 
-    const { error: insertError } = await supabase.from("tasks").insert({
+    const payload: Record<string, unknown> = {
       title: form.title,
       description: form.description,
       points: parseInt(form.points) || 0,
       due_date: dueDate,
-      image_url: imageUrl,
       task_type: form.task_type,
       duration_days: durationDays,
-    });
+    };
+    if (imageUrl) payload.image_url = imageUrl;
 
-    if (insertError) {
+    let opError;
+    if (editingId) {
+      const { error } = await supabase.from("tasks").update(payload).eq("id", editingId);
+      opError = error;
+    } else {
+      const { error } = await supabase.from("tasks").insert(payload);
+      opError = error;
+    }
+
+    if (opError) {
       setError("حدث خطأ أثناء الحفظ");
     } else {
-      setForm({ title: "", description: "", points: "10", due_date: "", task_type: "once", duration_days: "7" });
-      setImageFile(null);
-      setShowForm(false);
+      closeForm();
       await load();
     }
     setSaving(false);
@@ -122,7 +168,7 @@ export default function TeacherTasksPage() {
       <div className="flex items-center justify-between">
         <h1 className="font-display text-3xl text-teal">📋 إدارة المهام</h1>
         <button
-          onClick={() => setShowForm((v) => !v)}
+          onClick={() => (showForm ? closeForm() : openAddForm())}
           className="focus-ring rounded-full bg-teal px-4 py-2 text-sm font-bold text-cream hover:bg-teal-dark"
         >
           {showForm ? "إغلاق" : "➕ مهمة جديدة"}
@@ -131,7 +177,9 @@ export default function TeacherTasksPage() {
 
       {showForm && (
         <form onSubmit={handleSave} className="rounded-xl2 border-2 border-gold bg-gold-light p-5 shadow-sm">
-          <h2 className="mb-3 font-display text-lg text-navy">➕ مهمة جديدة</h2>
+          <h2 className="mb-3 font-display text-lg text-navy">
+            {editingId ? "✏️ تعديل المهمة" : "➕ مهمة جديدة"}
+          </h2>
 
           <div className="mb-3">
             <label className="mb-1 block text-sm font-bold text-navy">نوع المهمة</label>
@@ -211,7 +259,7 @@ export default function TeacherTasksPage() {
 
             <div className="sm:col-span-2">
               <label className="mb-1 block text-sm font-bold text-navy">
-                صورة مرفقة (اختياري)
+                صورة مرفقة (اختياري{editingId ? " - اتركه فاضياً للاحتفاظ بالصورة الحالية" : ""})
               </label>
               <input
                 type="file"
@@ -222,13 +270,22 @@ export default function TeacherTasksPage() {
             </div>
           </div>
           {error && <p className="mt-2 text-sm font-bold text-coral">{error}</p>}
-          <button
-            type="submit"
-            disabled={saving}
-            className="focus-ring mt-3 rounded-full bg-teal px-5 py-2 text-sm font-bold text-cream hover:bg-teal-dark disabled:opacity-60"
-          >
-            {saving ? "جاري الحفظ..." : "حفظ المهمة"}
-          </button>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="focus-ring rounded-full bg-teal px-5 py-2 text-sm font-bold text-cream hover:bg-teal-dark disabled:opacity-60"
+            >
+              {saving ? "جاري الحفظ..." : editingId ? "حفظ التعديلات" : "حفظ المهمة"}
+            </button>
+            <button
+              type="button"
+              onClick={closeForm}
+              className="focus-ring rounded-full border-2 border-navy/20 px-5 py-2 text-sm font-bold text-navy/70 hover:bg-white"
+            >
+              إلغاء
+            </button>
+          </div>
         </form>
       )}
 
@@ -274,12 +331,20 @@ export default function TeacherTasksPage() {
                       ✅ {t.done} / {t.total} طالب أنهى المهمة ({percent}٪)
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleDelete(t.id)}
-                    className="focus-ring rounded-full border-2 border-coral px-3 py-1.5 text-sm font-bold text-coral hover:bg-coral/10"
-                  >
-                    🗑️ حذف
-                  </button>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      onClick={() => openEditForm(t)}
+                      className="focus-ring rounded-full border-2 border-teal px-3 py-1.5 text-sm font-bold text-teal hover:bg-teal-light"
+                    >
+                      ✏️ تعديل
+                    </button>
+                    <button
+                      onClick={() => handleDelete(t.id)}
+                      className="focus-ring rounded-full border-2 border-coral px-3 py-1.5 text-sm font-bold text-coral hover:bg-coral/10"
+                    >
+                      🗑️ حذف
+                    </button>
+                  </div>
                 </div>
               </div>
             );
