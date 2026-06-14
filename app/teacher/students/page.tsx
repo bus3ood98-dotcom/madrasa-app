@@ -11,6 +11,7 @@ export default function TeacherStudentsPage() {
 
   // نموذج إضافة/تعديل
   const [editing, setEditing] = useState<Student | null>(null);
+  const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", username: "", password: "" });
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -30,9 +31,9 @@ export default function TeacherStudentsPage() {
     setLoading(false);
   }
 
-  function openAdd() {
-    setEditing(null);
-    setForm({ name: "", username: "", password: "" });
+  function openEdit(s: Student) {
+    setEditing(s);
+    setForm({ name: s.name, username: s.username, password: s.password });
     setFormError("");
   }
 
@@ -40,6 +41,7 @@ export default function TeacherStudentsPage() {
     setEditing(s);
     setForm({ name: s.name, username: s.username, password: s.password });
     setFormError("");
+    setShowForm(true);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -118,7 +120,7 @@ export default function TeacherStudentsPage() {
       </div>
 
       {/* نموذج الإضافة/التعديل */}
-      {(editing !== null || form.name || form.username || form.password) && (
+      {showForm && (
         <form
           onSubmit={handleSave}
           className="rounded-xl2 border-2 border-gold bg-gold-light p-5 shadow-sm"
@@ -163,6 +165,7 @@ export default function TeacherStudentsPage() {
               onClick={() => {
                 setEditing(null);
                 setForm({ name: "", username: "", password: "" });
+                setShowForm(false);
               }}
               className="focus-ring rounded-full border-2 border-navy/20 px-5 py-2 text-sm font-bold text-navy/70 hover:bg-white"
             >
