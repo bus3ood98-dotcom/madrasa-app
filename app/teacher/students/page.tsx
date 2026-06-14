@@ -31,10 +31,11 @@ export default function TeacherStudentsPage() {
     setLoading(false);
   }
 
-  function openEdit(s: Student) {
-    setEditing(s);
-    setForm({ name: s.name, username: s.username, password: s.password });
+  function openAdd() {
+    setEditing(null);
+    setForm({ name: "", username: "", password: "" });
     setFormError("");
+    setShowForm(true);
   }
 
   function openEdit(s: Student) {
