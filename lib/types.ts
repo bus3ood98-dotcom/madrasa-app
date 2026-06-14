@@ -34,12 +34,14 @@ export interface Student {
   username: string;
   password: string;
   name: string;
-  avatar: string; // emoji or icon key
+  avatar: string;
   total_points: number;
   streak: number;
   last_active_date: string | null;
   created_at: string;
 }
+
+export type TaskType = "once" | "daily";
 
 export interface Task {
   id: string;
@@ -49,6 +51,8 @@ export interface Task {
   due_date: string;
   image_url: string | null;
   created_at: string;
+  task_type: TaskType;
+  duration_days: number | null;
 }
 
 export type SubmissionStatus = "pending" | "done";
@@ -71,6 +75,15 @@ export interface BonusPoint {
   created_at: string;
 }
 
+export interface DailyCompletion {
+  id: string;
+  submission_id: string;
+  student_id: string;
+  task_id: string;
+  completion_date: string;
+  created_at: string;
+}
+
 export interface PointsHistory {
   id: string;
   student_id: string;
@@ -78,12 +91,10 @@ export interface PointsHistory {
   date: string;
 }
 
-// أيقونات/أفاتارات إسلامية جاهزة يختار الطالب من بينها
 export const AVATAR_OPTIONS = [
-  "🕌", "📿", "🌙", "⭐", "🪔", "📖", "🤲", "🕊️", "🌿", "🧕", "👳", "🌸",
+  "🕌", "📿", "🌙", "⭐", "🪔", "📖", "🤲", "🕊️", "🌿", "👦", "🧕", "🌸",
 ];
 
-// رسائل تشجيعية عشوائية
 export const ENCOURAGEMENT_MESSAGES = [
   "ما شاء الله! 🎉",
   "بارك الله فيك! 🌟",
