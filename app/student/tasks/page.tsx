@@ -3,11 +3,17 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getStudentSession } from "@/lib/session";
-import type { Task, Submission, Student } from "@/lib/types";
-import { ENCOURAGEMENT_MESSAGES, getLevel } from "@/lib/types";
+import type { Task, Submission, DailyCompletion } from "@/lib/types";
+import { ENCOURAGEMENT_MESSAGES } from "@/lib/types";
 
 interface TaskWithSubmission extends Task {
   submission: Submission;
+  doneDays: number;
+  doneToday: boolean;
+}
+
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
 }
 
 export default function StudentTasksPage() {
@@ -29,16 +35,54 @@ export default function StudentTasksPage() {
       .select("*, tasks(*)")
       .eq("student_id", studentId);
 
+    const { data: completions } = await supabase
+      .from("daily_completions")
+      .select("*")
+      .eq("student_id", studentId);
+
     if (submissions) {
+      const today = todayStr();
       const mapped: TaskWithSubmission[] = submissions
         .filter((s: any) => s.tasks)
-        .map((s: any) => ({ ...s.tasks, submission: s }));
+        .map((s: any) => {
+          const taskCompletions = (completions ?? []).filter(
+            (c: DailyCompletion) => c.submission_id === s.id
+          );
+          return {
+            ...s.tasks,
+            submission: s,
+            doneDays: taskCompletions.length,
+            doneToday: taskCompletions.some((c: DailyCompletion) => c.completion_date === today),
+          };
+        });
       setTasks(mapped);
     }
     setLoading(false);
   }
 
-  async function markDone(taskId: string, submissionId: string, points: number) {
+  async function awardPoints(studentId: string, points: number) {
+    const { data: student } = await supabase
+      .from("students")
+      .select("total_points")
+      .eq("id", studentId)
+      .single();
+
+    const newTotal = (student?.total_points ?? 0) + points;
+    await supabase.from("students").update({ total_points: newTotal }).eq("id", studentId);
+    await supabase.from("points_history").insert({
+      student_id: studentId,
+      points,
+      total_after: newTotal,
+    });
+  }
+
+  function showEncouragement() {
+    const msg = ENCOURAGEMENT_MESSAGES[Math.floor(Math.random() * ENCOURAGEMENT_MESSAGES.length)];
+    setToast(msg);
+    setTimeout(() => setToast(""), 2500);
+  }
+
+  async function markDoneOnce(submissionId: string, points: number) {
     const studentId = getStudentSession();
     if (!studentId) return;
 
@@ -50,28 +94,40 @@ export default function StudentTasksPage() {
       .eq("id", submissionId);
 
     if (!error) {
-      // تحديث النقاط الإجمالية
-      const { data: student } = await supabase
-        .from("students")
-        .select("total_points")
-        .eq("id", studentId)
-        .single();
+      await awardPoints(studentId, points);
+      showEncouragement();
+      await load();
+    }
+    setUploadingId(null);
+  }
 
-      const newTotal = (student?.total_points ?? 0) + points;
+  async function markDoneToday(t: TaskWithSubmission) {
+    const studentId = getStudentSession();
+    if (!studentId) return;
 
-      await supabase.from("students").update({ total_points: newTotal }).eq("id", studentId);
+    setUploadingId(t.submission.id);
 
-      // سجل تاريخي
-      await supabase.from("points_history").insert({
-        student_id: studentId,
-        points,
-        total_after: newTotal,
-      });
+    const { error } = await supabase.from("daily_completions").insert({
+      submission_id: t.submission.id,
+      student_id: studentId,
+      task_id: t.id,
+      completion_date: todayStr(),
+    });
 
-      const msg = ENCOURAGEMENT_MESSAGES[Math.floor(Math.random() * ENCOURAGEMENT_MESSAGES.length)];
-      setToast(msg);
-      setTimeout(() => setToast(""), 2500);
+    if (!error) {
+      await awardPoints(studentId, t.points);
 
+      const newDoneDays = t.doneDays + 1;
+      const totalDays = t.duration_days ?? 1;
+
+      if (newDoneDays >= totalDays) {
+        await supabase
+          .from("submissions")
+          .update({ status: "done", completed_at: new Date().toISOString() })
+          .eq("id", t.submission.id);
+      }
+
+      showEncouragement();
       await load();
     }
     setUploadingId(null);
@@ -100,22 +156,8 @@ export default function StudentTasksPage() {
 
   if (loading) return <p className="text-center text-navy/60">جاري التحميل...</p>;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const completed = tasks.filter((t) => t.submission.status === "done");
-  const current = tasks.filter(
-    (t) => t.submission.status === "pending" && new Date(t.due_date) >= today
-  );
-  const upcoming = current.filter((t) => {
-    const due = new Date(t.due_date);
-    const diff = (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
-    return diff > 7;
-  });
-  const currentNonUpcoming = current.filter((t) => !upcoming.includes(t));
-  const overdue = tasks.filter(
-    (t) => t.submission.status === "pending" && new Date(t.due_date) < today
-  );
+  const current = tasks.filter((t) => t.submission.status === "pending");
 
   return (
     <div className="space-y-8">
@@ -129,40 +171,69 @@ export default function StudentTasksPage() {
 
       <TaskSection
         title="⏳ المهام الحالية"
-        tasks={[...overdue, ...currentNonUpcoming]}
+        tasks={current}
         emptyText="لا توجد مهام حالية الآن 🎉"
-        renderActions={(t) => (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => markDone(t.id, t.submission.id, t.points)}
-              disabled={uploadingId === t.submission.id}
-              className="focus-ring rounded-full bg-teal px-4 py-2 text-sm font-bold text-cream transition hover:bg-teal-dark disabled:opacity-60"
-            >
-              ✅ تم الإنجاز
-            </button>
-            <label className="focus-ring cursor-pointer rounded-full border-2 border-teal px-4 py-2 text-sm font-bold text-teal transition hover:bg-teal-light">
-              📎 رفع صورة (اختياري)
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadSubmissionImage(file, t.submission.id);
-                }}
-              />
-            </label>
-            {t.submission.submission_image && (
-              <span className="text-sm text-teal">✓ تم رفع صورة</span>
-            )}
-          </div>
-        )}
-      />
+        renderActions={(t) => {
+          const isDaily = t.task_type === "daily";
 
-      <TaskSection
-        title="📅 المهام القادمة"
-        tasks={upcoming}
-        emptyText="لا توجد مهام قادمة بعيدة حالياً"
+          if (!isDaily) {
+            return (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => markDoneOnce(t.submission.id, t.points)}
+                  disabled={uploadingId === t.submission.id}
+                  className="focus-ring rounded-full bg-teal px-4 py-2 text-sm font-bold text-cream transition hover:bg-teal-dark disabled:opacity-60"
+                >
+                  ✅ تم الإنجاز
+                </button>
+                <label className="focus-ring cursor-pointer rounded-full border-2 border-teal px-4 py-2 text-sm font-bold text-teal transition hover:bg-teal-light">
+                  📎 رفع صورة (اختياري)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) uploadSubmissionImage(file, t.submission.id);
+                    }}
+                  />
+                </label>
+                {t.submission.submission_image && (
+                  <span className="text-sm text-teal">✓ تم رفع صورة</span>
+                )}
+              </div>
+            );
+          }
+
+          const totalDays = t.duration_days ?? 1;
+          const percent = Math.min(100, Math.round((t.doneDays / totalDays) * 100));
+          return (
+            <div className="mt-3">
+              <div className="mb-2 h-3 w-full overflow-hidden rounded-full bg-teal-light">
+                <div
+                  className="h-full rounded-full bg-gradient-to-l from-teal to-gold transition-all"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-bold text-navy/70">
+                  {t.doneDays} من {totalDays} يوم
+                </span>
+                <button
+                  onClick={() => markDoneToday(t)}
+                  disabled={uploadingId === t.submission.id || t.doneToday}
+                  className={`focus-ring rounded-full px-4 py-2 text-sm font-bold transition disabled:opacity-60 ${
+                    t.doneToday
+                      ? "bg-teal-light text-teal"
+                      : "bg-teal text-cream hover:bg-teal-dark"
+                  }`}
+                >
+                  {t.doneToday ? "✓ تم اليوم" : "✅ تم اليوم"}
+                </button>
+              </div>
+            </div>
+          );
+        }}
       />
 
       <TaskSection
@@ -198,24 +269,27 @@ function TaskSection({
       ) : (
         <div className="space-y-3">
           {tasks.map((t) => {
-            const isOverdue = new Date(t.due_date) < new Date() && t.submission.status === "pending";
+            const isDaily = t.task_type === "daily";
             return (
               <div
                 key={t.id}
                 className={`rounded-xl2 border-2 bg-white p-4 shadow-sm ${
-                  completedStyle
-                    ? "border-teal-light opacity-80"
-                    : isOverdue
-                    ? "border-coral"
-                    : "border-teal-light"
+                  completedStyle ? "border-teal-light opacity-80" : "border-teal-light"
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="font-display text-lg text-navy">
-                      {completedStyle && "✅ "}
-                      {t.title}
-                    </h3>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-display text-lg text-navy">
+                        {completedStyle && "✅ "}
+                        {t.title}
+                      </h3>
+                      {isDaily && (
+                        <span className="rounded-full bg-coral/10 px-2 py-0.5 text-xs font-bold text-coral">
+                          🔁 يومية
+                        </span>
+                      )}
+                    </div>
                     {t.description && (
                       <p className="mt-1 text-sm text-navy/70">{t.description}</p>
                     )}
@@ -228,15 +302,20 @@ function TaskSection({
                     )}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
-                    <span className="rounded-full bg-gold-light px-3 py-1 text-sm font-bold text-navy">
-                      ⭐ {t.points}
-                    </span>
-                    <span
-                      className={`text-xs font-bold ${isOverdue ? "text-coral" : "text-navy/60"}`}
-                    >
-                      📅 {new Date(t.due_date).toLocaleDateString("ar-SA")}
-                      {isOverdue && " (متأخرة)"}
-                    </span>
+                    {isDaily ? (
+                      <span className="rounded-full bg-gold-light px-3 py-1 text-sm font-bold text-navy">
+                        ⭐ {t.points}/يوم
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-gold-light px-3 py-1 text-sm font-bold text-navy">
+                        ⭐ {t.points}
+                      </span>
+                    )}
+                    {!isDaily && (
+                      <span className="text-xs font-bold text-navy/60">
+                        📅 {new Date(t.due_date).toLocaleDateString("ar-SA")}
+                      </span>
+                    )}
                   </div>
                 </div>
                 {renderActions && renderActions(t)}
