@@ -133,6 +133,45 @@ export default function StudentTasksPage() {
     setUploadingId(null);
   }
 
+  async function undoDoneToday(t: TaskWithSubmission) {
+    const studentId = getStudentSession();
+    if (!studentId) return;
+
+    setUploadingId(t.submission.id);
+
+    const { error } = await supabase
+      .from("daily_completions")
+      .delete()
+      .eq("submission_id", t.submission.id)
+      .eq("completion_date", todayStr());
+
+    if (!error) {
+      const { data: student } = await supabase
+        .from("students")
+        .select("total_points")
+        .eq("id", studentId)
+        .single();
+
+      const newTotal = Math.max(0, (student?.total_points ?? 0) - t.points);
+      await supabase.from("students").update({ total_points: newTotal }).eq("id", studentId);
+      await supabase.from("points_history").insert({
+        student_id: studentId,
+        points: -t.points,
+        total_after: newTotal,
+      });
+
+      if (t.submission.status === "done") {
+        await supabase
+          .from("submissions")
+          .update({ status: "pending", completed_at: null })
+          .eq("id", t.submission.id);
+      }
+
+      await load();
+    }
+    setUploadingId(null);
+  }
+
   async function uploadSubmissionImage(file: File, submissionId: string) {
     setUploadingId(submissionId);
     const ext = file.name.split(".").pop();
@@ -219,17 +258,28 @@ export default function StudentTasksPage() {
                 <span className="text-sm font-bold text-navy/70">
                   {t.doneDays} من {totalDays} يوم
                 </span>
-                <button
-                  onClick={() => markDoneToday(t)}
-                  disabled={uploadingId === t.submission.id || t.doneToday}
-                  className={`focus-ring rounded-full px-4 py-2 text-sm font-bold transition disabled:opacity-60 ${
-                    t.doneToday
-                      ? "bg-teal-light text-teal"
-                      : "bg-teal text-cream hover:bg-teal-dark"
-                  }`}
-                >
-                  {t.doneToday ? "✓ تم اليوم" : "✅ تم اليوم"}
-                </button>
+                <div className="flex items-center gap-2">
+                  {t.doneToday && (
+                    <button
+                      onClick={() => undoDoneToday(t)}
+                      disabled={uploadingId === t.submission.id}
+                      className="focus-ring rounded-full border-2 border-coral px-3 py-2 text-sm font-bold text-coral transition hover:bg-coral/10 disabled:opacity-60"
+                    >
+                      ↩️ تراجع
+                    </button>
+                  )}
+                  <button
+                    onClick={() => markDoneToday(t)}
+                    disabled={uploadingId === t.submission.id || t.doneToday}
+                    className={`focus-ring rounded-full px-4 py-2 text-sm font-bold transition disabled:opacity-60 ${
+                      t.doneToday
+                        ? "bg-teal-light text-teal"
+                        : "bg-teal text-cream hover:bg-teal-dark"
+                    }`}
+                  >
+                    {t.doneToday ? "✓ تم اليوم" : "✅ تم اليوم"}
+                  </button>
+                </div>
               </div>
             </div>
           );
