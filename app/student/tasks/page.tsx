@@ -15,20 +15,21 @@ function todayStr() {
   return new Date().toISOString().split("T")[0];
 }
 
-function dateStr(d: Date) {
-  return d.toISOString().split("T")[0];
-}
-
-function dayDate(startDate: string, dayIndex: number) {
-  const d = new Date(startDate);
-  d.setDate(d.getDate() + dayIndex);
-  return dateStr(d);
+function getTaskDays(startDate: string, endDate: string): string[] {
+  const days: string[] = [];
+  const cur = new Date(startDate);
+  const end = new Date(endDate);
+  while (cur <= end) {
+    days.push(cur.toISOString().split("T")[0]);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
 }
 
 export default function StudentTasksPage() {
   const [tasks, setTasks] = useState<TaskWithSubmission[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [toast, setToast] = useState("");
 
   useEffect(() => {
@@ -93,7 +94,7 @@ export default function StudentTasksPage() {
     const studentId = getStudentSession();
     if (!studentId) return;
 
-    setUploadingId(submissionId);
+    setBusyKey(submissionId);
 
     const { error } = await supabase
       .from("submissions")
@@ -105,99 +106,72 @@ export default function StudentTasksPage() {
       showEncouragement();
       await load();
     }
-    setUploadingId(null);
+    setBusyKey(null);
   }
 
-  async function markDoneToday(t: TaskWithSubmission) {
+  async function toggleDay(t: TaskWithSubmission, dateStr: string, isToday: boolean) {
     const studentId = getStudentSession();
     if (!studentId) return;
 
-    const totalDays = t.duration_days ?? 1;
-    const startDate = t.submission.created_at;
-    const today = todayStr();
+    const key = `${t.submission.id}-${dateStr}`;
+    setBusyKey(key);
 
-    let targetDayIndex = -1;
-    for (let i = 0; i < totalDays; i++) {
-      const dStr = dayDate(startDate, i);
-      if (dStr > today) break;
-      const exists = t.completions.some((c) => c.completion_date === dStr);
-      if (!exists) {
-        targetDayIndex = i;
-        break;
+    const existing = t.completions.find((c) => c.completion_date === dateStr);
+
+    if (existing) {
+      const { error } = await supabase.from("daily_completions").delete().eq("id", existing.id);
+      if (!error) {
+        const points = existing.is_late ? Math.round(t.points / 2) : t.points;
+        await awardPoints(studentId, -points);
+
+        if (t.submission.status === "done") {
+          await supabase
+            .from("submissions")
+            .update({ status: "pending", completed_at: null })
+            .eq("id", t.submission.id);
+        }
+        await load();
+      }
+    } else {
+      const isLate = !isToday;
+      const points = isLate ? Math.round(t.points / 2) : t.points;
+
+      const { error } = await supabase.from("daily_completions").insert({
+        submission_id: t.submission.id,
+        student_id: studentId,
+        task_id: t.id,
+        completion_date: dateStr,
+        is_late: isLate,
+      });
+
+      if (!error) {
+        await awardPoints(studentId, points);
+
+        const startDate = t.start_date ?? t.due_date;
+        const allDays = getTaskDays(startDate, t.due_date);
+        const newCompletedCount = t.completions.length + 1;
+        if (newCompletedCount >= allDays.length) {
+          await supabase
+            .from("submissions")
+            .update({ status: "done", completed_at: new Date().toISOString() })
+            .eq("id", t.submission.id);
+        }
+
+        showEncouragement();
+        await load();
       }
     }
-
-    if (targetDayIndex === -1) return;
-
-    const targetDateStr = dayDate(startDate, targetDayIndex);
-    const isLate = targetDateStr !== today;
-    const points = isLate ? Math.round(t.points / 2) : t.points;
-
-    setUploadingId(t.submission.id);
-
-    const { error } = await supabase.from("daily_completions").insert({
-      submission_id: t.submission.id,
-      student_id: studentId,
-      task_id: t.id,
-      completion_date: targetDateStr,
-      is_late: isLate,
-    });
-
-    if (!error) {
-      await awardPoints(studentId, points);
-
-      const newCompletedCount = t.completions.length + 1;
-      if (newCompletedCount >= totalDays) {
-        await supabase
-          .from("submissions")
-          .update({ status: "done", completed_at: new Date().toISOString() })
-          .eq("id", t.submission.id);
-      }
-
-      showEncouragement();
-      await load();
-    }
-    setUploadingId(null);
-  }
-
-  async function undoLastCompletion(t: TaskWithSubmission) {
-    const studentId = getStudentSession();
-    if (!studentId) return;
-
-    if (t.completions.length === 0) return;
-
-    const last = [...t.completions].sort((a, b) =>
-      a.completion_date < b.completion_date ? 1 : -1
-    )[0];
-
-    setUploadingId(t.submission.id);
-
-    const { error } = await supabase.from("daily_completions").delete().eq("id", last.id);
-
-    if (!error) {
-      const points = last.is_late ? Math.round(t.points / 2) : t.points;
-      await awardPoints(studentId, -points);
-
-      if (t.submission.status === "done") {
-        await supabase
-          .from("submissions")
-          .update({ status: "pending", completed_at: null })
-          .eq("id", t.submission.id);
-      }
-
-      await load();
-    }
-    setUploadingId(null);
+    setBusyKey(null);
   }
 
   async function uploadSubmissionImage(file: File, submissionId: string) {
-    setUploadingId(submissionId);
+    setBusyKey(submissionId);
     const ext = file.name.split(".").pop();
     const path = `submissions/${submissionId}-${Date.now()}.${ext}`;
 
     const { error: uploadError } = await supabase.storage.from("uploads").upload(path, file);
     if (uploadError) {
-      setUploadingId(null);
+      setBusyKey(null);
       return;
     }
     const { data: urlData } = supabase.storage.from("uploads").getPublicUrl(path);
@@ -208,7 +182,7 @@ export default function StudentTasksPage() {
       .eq("id", submissionId);
 
     await load();
-    setUploadingId(null);
+    setBusyKey(null);
   }
 
   if (loading) return <p className="text-center text-navy/60">جاري التحميل...</p>;
@@ -238,7 +212,7 @@ export default function StudentTasksPage() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => markDoneOnce(t.submission.id, t.points)}
-                  disabled={uploadingId === t.submission.id}
+                  disabled={busyKey === t.submission.id}
                   className="focus-ring rounded-full bg-teal px-4 py-2 text-sm font-bold text-cream transition hover:bg-teal-dark disabled:opacity-60"
                 >
                   ✅ تم الإنجاز
@@ -262,76 +236,50 @@ export default function StudentTasksPage() {
             );
           }
 
-          const totalDays = t.duration_days ?? 1;
-          const startDate = t.submission.created_at;
           const today = todayStr();
-
-          const days = Array.from({ length: totalDays }, (_, i) => {
-            const dStr = dayDate(startDate, i);
-            const completion = t.completions.find((c) => c.completion_date === dStr);
-            let state: "done" | "late" | "today" | "future" | "missed" = "future";
-            if (completion) {
-              state = completion.is_late ? "late" : "done";
-            } else if (dStr === today) {
-              state = "today";
-            } else if (dStr < today) {
-              state = "missed";
-            }
-            return { dayNumber: i + 1, state };
-          });
-
-          const canMark = days.some((d) => d.state === "today" || d.state === "missed");
-          const canUndo = t.completions.length > 0;
+          const startDate = t.start_date ?? t.due_date;
+          const allDays = getTaskDays(startDate, t.due_date);
 
           return (
             <div className="mt-3">
-              <div className="mb-3 flex flex-wrap gap-2">
-                {days.map((d) => (
-                  <div
-                    key={d.dayNumber}
-                    className={`flex h-10 w-10 items-center justify-center rounded-full border-2 text-sm font-bold ${
-                      d.state === "done"
-                        ? "border-teal bg-teal text-cream"
-                        : d.state === "late"
-                        ? "border-gold bg-gold text-navy"
-                        : d.state === "today"
-                        ? "border-teal bg-white text-teal animate-pulse"
-                        : d.state === "missed"
-                        ? "border-coral/40 bg-coral/10 text-coral"
-                        : "border-navy/10 bg-cream text-navy/30"
-                    }`}
-                    title={`اليوم ${d.dayNumber}`}
-                  >
-                    {d.state === "done" || d.state === "late" ? "✓" : d.dayNumber}
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-bold text-navy/70">
-                  {t.completions.length} من {totalDays} يوم
-                  {t.completions.some((c) => c.is_late) && (
-                    <span className="mr-2 text-gold"> (يوجد أيام معوّضة 🟡)</span>
-                  )}
-                </span>
-                <div className="flex items-center gap-2">
-                  {canUndo && (
+              <div className="flex flex-wrap gap-2">
+                {allDays.map((dStr, idx) => {
+                  const completion = t.completions.find((c) => c.completion_date === dStr);
+                  const isToday = dStr === today;
+                  const isPastOrToday = dStr <= today;
+                  const key = `${t.submission.id}-${dStr}`;
+                  const isBusy = busyKey === key;
+
+                  let classes = "";
+                  if (completion) {
+                    classes = completion.is_late
+                      ? "border-gold bg-gold text-navy"
+                      : "border-teal bg-teal text-cream";
+                  } else if (isToday) {
+                    classes = "border-teal bg-white text-teal";
+                  } else if (isPastOrToday) {
+                    classes = "border-gold/50 bg-white text-gold";
+                  } else {
+                    classes = "border-navy/10 bg-cream text-navy/30 cursor-not-allowed";
+                  }
+
+                  return (
                     <button
-                      onClick={() => undoLastCompletion(t)}
-                      disabled={uploadingId === t.submission.id}
-                      className="focus-ring rounded-full border-2 border-coral px-3 py-2 text-sm font-bold text-coral transition hover:bg-coral/10 disabled:opacity-60"
+                      key={dStr}
+                      type="button"
+                      disabled={!isPastOrToday || isBusy}
+                      onClick={() => toggleDay(t, dStr, isToday)}
+                      className={`focus-ring flex h-10 w-10 items-center justify-center rounded-full border-2 text-sm font-bold transition disabled:opacity-60 ${classes}`}
+                      title={dStr}
                     >
-                      ↩️ تراجع
+                      {completion ? "✓" : idx + 1}
                     </button>
-                  )}
-                  <button
-                    onClick={() => markDoneToday(t)}
-                    disabled={uploadingId === t.submission.id || !canMark}
-                    className="focus-ring rounded-full bg-teal px-4 py-2 text-sm font-bold text-cream transition hover:bg-teal-dark disabled:opacity-60"
-                  >
-                    ✅ تم اليوم
-                  </button>
-                </div>
+                  );
+                })}
               </div>
+              <p className="mt-2 text-xs text-navy/60">
+                🟢 اليوم · 🟡 تعويض يوم سابق · ⚪ مستقبل (مقفل)
+              </p>
             </div>
           );
         }}
