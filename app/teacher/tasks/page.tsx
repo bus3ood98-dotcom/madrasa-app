@@ -14,9 +14,15 @@ const emptyForm = {
   description: "",
   points: "10",
   due_date: "",
+  start_date: "",
   task_type: "once" as TaskType,
-  duration_days: "7",
 };
+
+function daysBetween(start: string, end: string) {
+  const s = new Date(start);
+  const e = new Date(end);
+  return Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+}
 
 export default function TeacherTasksPage() {
   const [tasks, setTasks] = useState<TaskWithProgress[]>([]);
@@ -51,7 +57,8 @@ export default function TeacherTasksPage() {
 
   function openAddForm() {
     setEditingId(null);
-    setForm(emptyForm);
+    const today = new Date().toISOString().split("T")[0];
+    setForm({ ...emptyForm, start_date: today, due_date: today });
     setImageFile(null);
     setError("");
     setShowForm(true);
@@ -63,9 +70,9 @@ export default function TeacherTasksPage() {
       title: t.title,
       description: t.description,
       points: String(t.points),
-      due_date: t.task_type === "once" ? t.due_date : "",
+      due_date: t.due_date,
+      start_date: t.start_date ?? t.due_date,
       task_type: t.task_type,
-      duration_days: String(t.duration_days ?? 7),
     });
     setImageFile(null);
     setError("");
@@ -89,15 +96,18 @@ export default function TeacherTasksPage() {
       return;
     }
 
-    if (form.task_type === "once" && !form.due_date) {
-      setError("تاريخ التسليم مطلوب لهذا النوع من المهام");
+    if (!form.due_date) {
+      setError("تاريخ الانتهاء مطلوب");
       return;
     }
 
     if (form.task_type === "daily") {
-      const days = parseInt(form.duration_days);
-      if (!days || days < 1) {
-        setError("عدد الأيام يجب أن يكون رقماً صحيحاً أكبر من صفر");
+      if (!form.start_date) {
+        setError("تاريخ البداية مطلوب للمهام اليومية");
+        return;
+      }
+      if (form.start_date > form.due_date) {
+        setError("تاريخ البداية يجب أن يكون قبل أو يساوي تاريخ الانتهاء");
         return;
       }
     }
@@ -115,27 +125,14 @@ export default function TeacherTasksPage() {
       }
     }
 
-    let dueDate = form.due_date;
-    let durationDays: number | null = null;
-    if (form.task_type === "daily") {
-      durationDays = parseInt(form.duration_days);
-      if (!editingId) {
-        const d = new Date();
-        d.setDate(d.getDate() + durationDays);
-        dueDate = d.toISOString().split("T")[0];
-      } else {
-        const existing = tasks.find((t) => t.id === editingId);
-        dueDate = existing?.due_date ?? dueDate;
-      }
-    }
-
     const payload: Record<string, unknown> = {
       title: form.title,
       description: form.description,
       points: parseInt(form.points) || 0,
-      due_date: dueDate,
+      due_date: form.due_date,
       task_type: form.task_type,
-      duration_days: durationDays,
+      start_date: form.task_type === "daily" ? form.start_date : null,
+      duration_days: form.task_type === "daily" ? daysBetween(form.start_date, form.due_date) : null,
     };
     if (imageUrl) payload.image_url = imageUrl;
 
@@ -206,7 +203,7 @@ export default function TeacherTasksPage() {
             <p className="mt-1 text-xs text-navy/60">
               {form.task_type === "once"
                 ? "المهمة تُنجز مرة واحدة بحلول تاريخ معيّن (مثال: حفظ أبيات، تسليم بحث)."
-                : "المهمة تتكرر كل يوم لعدد أيام محدد، والطالب يضغط «تم اليوم» يومياً (مثال: الاستغفار اليومي)."}
+                : "حدّد تاريخ البداية وتاريخ النهاية، وستظهر للطالب دائرة لكل يوم بينهما يضغط عليها لتعليم إنجازه."}
             </p>
           </div>
 
@@ -233,27 +230,34 @@ export default function TeacherTasksPage() {
               className="focus-ring rounded-xl border-2 border-teal-light px-3 py-2 outline-none"
             />
 
-            {form.task_type === "once" ? (
+            {form.task_type === "daily" && (
+              <div>
+                <label className="mb-1 block text-xs font-bold text-navy">تاريخ البداية</label>
+                <input
+                  type="date"
+                  value={form.start_date}
+                  onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                  className="focus-ring w-full rounded-xl border-2 border-teal-light px-3 py-2 outline-none"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1 block text-xs font-bold text-navy">
+                {form.task_type === "daily" ? "تاريخ النهاية" : "تاريخ التسليم"}
+              </label>
               <input
                 type="date"
                 value={form.due_date}
                 onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-                className="focus-ring rounded-xl border-2 border-teal-light px-3 py-2 outline-none"
+                className="focus-ring w-full rounded-xl border-2 border-teal-light px-3 py-2 outline-none"
               />
-            ) : (
-              <input
-                type="number"
-                placeholder="عدد الأيام (مثال: 7)"
-                min={1}
-                value={form.duration_days}
-                onChange={(e) => setForm({ ...form, duration_days: e.target.value })}
-                className="focus-ring rounded-xl border-2 border-teal-light px-3 py-2 outline-none"
-              />
-            )}
+            </div>
 
-            {form.task_type === "daily" && (
+            {form.task_type === "daily" && form.start_date && form.due_date && form.start_date <= form.due_date && (
               <p className="text-xs text-navy/60 sm:col-span-2">
-                إجمالي النقاط عند إكمال كل الأيام: {(parseInt(form.points) || 0) * (parseInt(form.duration_days) || 0)} نقطة
+                عدد الأيام: {daysBetween(form.start_date, form.due_date)} يوم · إجمالي النقاط عند الإكمال الكامل:{" "}
+                {(parseInt(form.points) || 0) * daysBetween(form.start_date, form.due_date)} نقطة
               </p>
             )}
 
@@ -320,7 +324,9 @@ export default function TeacherTasksPage() {
                     )}
                     {isDaily ? (
                       <p className="mt-2 text-sm font-bold text-navy/70">
-                        ⭐ {t.points} نقطة/يوم × {t.duration_days} يوم = {t.points * (t.duration_days ?? 0)} نقطة
+                        ⭐ {t.points} نقطة/يوم · 📅 من {new Date(t.start_date ?? t.due_date).toLocaleDateString("ar-SA")} إلى{" "}
+                        {new Date(t.due_date).toLocaleDateString("ar-SA")} ({t.duration_days} يوم) · إجمالي{" "}
+                        {t.points * (t.duration_days ?? 0)} نقطة
                       </p>
                     ) : (
                       <p className="mt-2 text-sm font-bold text-navy/70">
