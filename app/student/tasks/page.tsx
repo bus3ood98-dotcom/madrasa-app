@@ -8,12 +8,21 @@ import { ENCOURAGEMENT_MESSAGES } from "@/lib/types";
 
 interface TaskWithSubmission extends Task {
   submission: Submission;
-  doneDays: number;
-  doneToday: boolean;
+  completions: DailyCompletion[];
 }
 
 function todayStr() {
   return new Date().toISOString().split("T")[0];
+}
+
+function dateStr(d: Date) {
+  return d.toISOString().split("T")[0];
+}
+
+function dayDate(startDate: string, dayIndex: number) {
+  const d = new Date(startDate);
+  d.setDate(d.getDate() + dayIndex);
+  return dateStr(d);
 }
 
 export default function StudentTasksPage() {
@@ -41,7 +50,6 @@ export default function StudentTasksPage() {
       .eq("student_id", studentId);
 
     if (submissions) {
-      const today = todayStr();
       const mapped: TaskWithSubmission[] = submissions
         .filter((s: any) => s.tasks)
         .map((s: any) => {
@@ -51,8 +59,7 @@ export default function StudentTasksPage() {
           return {
             ...s.tasks,
             submission: s,
-            doneDays: taskCompletions.length,
-            doneToday: taskCompletions.some((c: DailyCompletion) => c.completion_date === today),
+            completions: taskCompletions,
           };
         });
       setTasks(mapped);
@@ -67,7 +74,7 @@ export default function StudentTasksPage() {
       .eq("id", studentId)
       .single();
 
-    const newTotal = (student?.total_points ?? 0) + points;
+    const newTotal = Math.max(0, (student?.total_points ?? 0) + points);
     await supabase.from("students").update({ total_points: newTotal }).eq("id", studentId);
     await supabase.from("points_history").insert({
       student_id: studentId,
@@ -105,22 +112,42 @@ export default function StudentTasksPage() {
     const studentId = getStudentSession();
     if (!studentId) return;
 
+    const totalDays = t.duration_days ?? 1;
+    const startDate = t.submission.created_at;
+    const today = todayStr();
+
+    let targetDayIndex = -1;
+    for (let i = 0; i < totalDays; i++) {
+      const dStr = dayDate(startDate, i);
+      if (dStr > today) break;
+      const exists = t.completions.some((c) => c.completion_date === dStr);
+      if (!exists) {
+        targetDayIndex = i;
+        break;
+      }
+    }
+
+    if (targetDayIndex === -1) return;
+
+    const targetDateStr = dayDate(startDate, targetDayIndex);
+    const isLate = targetDateStr !== today;
+    const points = isLate ? Math.round(t.points / 2) : t.points;
+
     setUploadingId(t.submission.id);
 
     const { error } = await supabase.from("daily_completions").insert({
       submission_id: t.submission.id,
       student_id: studentId,
       task_id: t.id,
-      completion_date: todayStr(),
+      completion_date: targetDateStr,
+      is_late: isLate,
     });
 
     if (!error) {
-      await awardPoints(studentId, t.points);
+      await awardPoints(studentId, points);
 
-      const newDoneDays = t.doneDays + 1;
-      const totalDays = t.duration_days ?? 1;
-
-      if (newDoneDays >= totalDays) {
+      const newCompletedCount = t.completions.length + 1;
+      if (newCompletedCount >= totalDays) {
         await supabase
           .from("submissions")
           .update({ status: "done", completed_at: new Date().toISOString() })
@@ -133,32 +160,23 @@ export default function StudentTasksPage() {
     setUploadingId(null);
   }
 
-  async function undoDoneToday(t: TaskWithSubmission) {
+  async function undoLastCompletion(t: TaskWithSubmission) {
     const studentId = getStudentSession();
     if (!studentId) return;
 
+    if (t.completions.length === 0) return;
+
+    const last = [...t.completions].sort((a, b) =>
+      a.completion_date < b.completion_date ? 1 : -1
+    )[0];
+
     setUploadingId(t.submission.id);
 
-    const { error } = await supabase
-      .from("daily_completions")
-      .delete()
-      .eq("submission_id", t.submission.id)
-      .eq("completion_date", todayStr());
+    const { error } = await supabase.from("daily_completions").delete().eq("id", last.id);
 
     if (!error) {
-      const { data: student } = await supabase
-        .from("students")
-        .select("total_points")
-        .eq("id", studentId)
-        .single();
-
-      const newTotal = Math.max(0, (student?.total_points ?? 0) - t.points);
-      await supabase.from("students").update({ total_points: newTotal }).eq("id", studentId);
-      await supabase.from("points_history").insert({
-        student_id: studentId,
-        points: -t.points,
-        total_after: newTotal,
-      });
+      const points = last.is_late ? Math.round(t.points / 2) : t.points;
+      await awardPoints(studentId, -points);
 
       if (t.submission.status === "done") {
         await supabase
@@ -245,23 +263,60 @@ export default function StudentTasksPage() {
           }
 
           const totalDays = t.duration_days ?? 1;
-          const percent = Math.min(100, Math.round((t.doneDays / totalDays) * 100));
+          const startDate = t.submission.created_at;
+          const today = todayStr();
+
+          const days = Array.from({ length: totalDays }, (_, i) => {
+            const dStr = dayDate(startDate, i);
+            const completion = t.completions.find((c) => c.completion_date === dStr);
+            let state: "done" | "late" | "today" | "future" | "missed" = "future";
+            if (completion) {
+              state = completion.is_late ? "late" : "done";
+            } else if (dStr === today) {
+              state = "today";
+            } else if (dStr < today) {
+              state = "missed";
+            }
+            return { dayNumber: i + 1, state };
+          });
+
+          const canMark = days.some((d) => d.state === "today" || d.state === "missed");
+          const canUndo = t.completions.length > 0;
+
           return (
             <div className="mt-3">
-              <div className="mb-2 h-3 w-full overflow-hidden rounded-full bg-teal-light">
-                <div
-                  className="h-full rounded-full bg-gradient-to-l from-teal to-gold transition-all"
-                  style={{ width: `${percent}%` }}
-                />
+              <div className="mb-3 flex flex-wrap gap-2">
+                {days.map((d) => (
+                  <div
+                    key={d.dayNumber}
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border-2 text-sm font-bold ${
+                      d.state === "done"
+                        ? "border-teal bg-teal text-cream"
+                        : d.state === "late"
+                        ? "border-gold bg-gold text-navy"
+                        : d.state === "today"
+                        ? "border-teal bg-white text-teal animate-pulse"
+                        : d.state === "missed"
+                        ? "border-coral/40 bg-coral/10 text-coral"
+                        : "border-navy/10 bg-cream text-navy/30"
+                    }`}
+                    title={`اليوم ${d.dayNumber}`}
+                  >
+                    {d.state === "done" || d.state === "late" ? "✓" : d.dayNumber}
+                  </div>
+                ))}
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm font-bold text-navy/70">
-                  {t.doneDays} من {totalDays} يوم
+                  {t.completions.length} من {totalDays} يوم
+                  {t.completions.some((c) => c.is_late) && (
+                    <span className="mr-2 text-gold"> (يوجد أيام معوّضة 🟡)</span>
+                  )}
                 </span>
                 <div className="flex items-center gap-2">
-                  {t.doneToday && (
+                  {canUndo && (
                     <button
-                      onClick={() => undoDoneToday(t)}
+                      onClick={() => undoLastCompletion(t)}
                       disabled={uploadingId === t.submission.id}
                       className="focus-ring rounded-full border-2 border-coral px-3 py-2 text-sm font-bold text-coral transition hover:bg-coral/10 disabled:opacity-60"
                     >
@@ -270,14 +325,10 @@ export default function StudentTasksPage() {
                   )}
                   <button
                     onClick={() => markDoneToday(t)}
-                    disabled={uploadingId === t.submission.id || t.doneToday}
-                    className={`focus-ring rounded-full px-4 py-2 text-sm font-bold transition disabled:opacity-60 ${
-                      t.doneToday
-                        ? "bg-teal-light text-teal"
-                        : "bg-teal text-cream hover:bg-teal-dark"
-                    }`}
+                    disabled={uploadingId === t.submission.id || !canMark}
+                    className="focus-ring rounded-full bg-teal px-4 py-2 text-sm font-bold text-cream transition hover:bg-teal-dark disabled:opacity-60"
                   >
-                    {t.doneToday ? "✓ تم اليوم" : "✅ تم اليوم"}
+                    ✅ تم اليوم
                   </button>
                 </div>
               </div>
