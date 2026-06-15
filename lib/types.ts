@@ -81,6 +81,7 @@ export interface DailyCompletion {
   student_id: string;
   task_id: string;
   completion_date: string;
+  is_late: boolean;
   created_at: string;
 }
 
