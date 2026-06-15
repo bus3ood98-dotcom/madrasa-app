@@ -49,6 +49,7 @@ export interface Task {
   description: string;
   points: number;
   due_date: string;
+  start_date: string | null;
   image_url: string | null;
   created_at: string;
   task_type: TaskType;
