@@ -107,6 +107,23 @@ export default function StudentTasksPage() {
       await load();
     }
     setBusyKey(null);
+    async function undoDoneOnce(t: TaskWithSubmission) {
+    const studentId = getStudentSession();
+    if (!studentId) return;
+
+    setBusyKey(t.submission.id);
+
+    const { error } = await supabase
+      .from("submissions")
+      .update({ status: "pending", completed_at: null })
+      .eq("id", t.submission.id);
+
+    if (!error) {
+      await awardPoints(studentId, -t.points);
+      await load();
+    }
+    setBusyKey(null);
+    }
   }
 
   async function toggleDay(t: TaskWithSubmission, dateStr: string, isToday: boolean) {
@@ -290,6 +307,19 @@ export default function StudentTasksPage() {
         tasks={completed}
         emptyText="لم تكمل أي مهمة بعد، ابدأ الآن! 💪"
         completedStyle
+        renderActions={(t) =>
+          t.task_type === "once" ? (
+            <div className="mt-3">
+              <button
+                onClick={() => undoDoneOnce(t)}
+                disabled={busyKey === t.submission.id}
+                className="focus-ring rounded-full border-2 border-coral px-4 py-2 text-sm font-bold text-coral transition hover:bg-coral/10 disabled:opacity-60"
+              >
+                ↩️ تراجع عن الإنجاز
+              </button>
+            </div>
+          ) : null
+        }
       />
     </div>
   );
