@@ -107,6 +107,7 @@ export default function StudentTasksPage() {
       await load();
     }
     setBusyKey(null);
+    }
     async function undoDoneOnce(t: TaskWithSubmission) {
     const studentId = getStudentSession();
     if (!studentId) return;
