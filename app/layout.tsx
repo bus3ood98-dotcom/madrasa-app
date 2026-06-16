@@ -17,6 +17,20 @@ const tajawal = Tajawal({
 export const metadata: Metadata = {
   title: "إنجاز | منصة الواجبات",
   description: "منصة متابعة الواجبات والإنجازات للطلاب",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "إنجاز",
+  },
+  icons: {
+    icon: "/icon-192.png",
+    apple: "/apple-touch-icon.png",
+  },
+};
+
+export const viewport = {
+  themeColor: "#0F6E5F",
 };
 
 export default function RootLayout({
