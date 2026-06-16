@@ -125,7 +125,7 @@ export default function StudentTasksPage() {
     }
     setBusyKey(null);
     }
-  }
+  
 
   async function toggleDay(t: TaskWithSubmission, dateStr: string, isToday: boolean) {
     const studentId = getStudentSession();
