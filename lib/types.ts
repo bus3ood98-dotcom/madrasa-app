@@ -64,6 +64,7 @@ export interface Submission {
   task_id: string;
   status: SubmissionStatus;
   submission_image: string | null;
+  submission_audio: string | null;
   completed_at: string | null;
   created_at: string;
 }
