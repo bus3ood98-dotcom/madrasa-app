@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { getStudentSession } from "@/lib/session";
 import type { Task, Submission, DailyCompletion } from "@/lib/types";
 import { ENCOURAGEMENT_MESSAGES } from "@/lib/types";
+import { AudioRecorder } from "@/components/AudioRecorder";
 
 interface TaskWithSubmission extends Task {
   submission: Submission;
@@ -107,8 +108,9 @@ export default function StudentTasksPage() {
       await load();
     }
     setBusyKey(null);
-    }
-    async function undoDoneOnce(t: TaskWithSubmission) {
+  }
+
+  async function undoDoneOnce(t: TaskWithSubmission) {
     const studentId = getStudentSession();
     if (!studentId) return;
 
@@ -124,8 +126,7 @@ export default function StudentTasksPage() {
       await load();
     }
     setBusyKey(null);
-    }
-  
+  }
 
   async function toggleDay(t: TaskWithSubmission, dateStr: string, isToday: boolean) {
     const studentId = getStudentSession();
@@ -182,10 +183,10 @@ export default function StudentTasksPage() {
     setBusyKey(null);
   }
 
-  async function uploadSubmissionImage(file: File, submissionId: string) {
+  async function uploadImage(file: File, submissionId: string) {
     setBusyKey(submissionId);
     const ext = file.name.split(".").pop();
-    const path = `submissions/${submissionId}-${Date.now()}.${ext}`;
+    const path = `submissions/img-${submissionId}-${Date.now()}.${ext}`;
 
     const { error: uploadError } = await supabase.storage.from("uploads").upload(path, file);
     if (uploadError) {
@@ -201,6 +202,84 @@ export default function StudentTasksPage() {
 
     await load();
     setBusyKey(null);
+  }
+
+  async function uploadAudio(file: File, submissionId: string) {
+    setBusyKey(submissionId);
+    const ext = file.name.split(".").pop() || "webm";
+    const path = `submissions/audio-${submissionId}-${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage.from("uploads").upload(path, file);
+    if (uploadError) {
+      setBusyKey(null);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from("uploads").getPublicUrl(path);
+
+    await supabase
+      .from("submissions")
+      .update({ submission_audio: urlData.publicUrl })
+      .eq("id", submissionId);
+
+    await load();
+    setBusyKey(null);
+  }
+
+  function AttachmentControls({ t }: { t: TaskWithSubmission }) {
+    const busy = busyKey === t.submission.id;
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-teal-light pt-3">
+        <span className="text-xs font-bold text-navy/60">إرفاق (اختياري):</span>
+
+        <label className="focus-ring cursor-pointer rounded-full border-2 border-teal px-3 py-1.5 text-xs font-bold text-teal transition hover:bg-teal-light">
+          🖼️ صورة
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadImage(file, t.submission.id);
+            }}
+          />
+        </label>
+
+        <label className="focus-ring cursor-pointer rounded-full border-2 border-teal px-3 py-1.5 text-xs font-bold text-teal transition hover:bg-teal-light">
+          📷 تصوير
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadImage(file, t.submission.id);
+            }}
+          />
+        </label>
+
+        <label className="focus-ring cursor-pointer rounded-full border-2 border-teal px-3 py-1.5 text-xs font-bold text-teal transition hover:bg-teal-light">
+          🎵 ملف صوتي
+          <input
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadAudio(file, t.submission.id);
+            }}
+          />
+        </label>
+
+        <AudioRecorder
+          disabled={busy}
+          onRecorded={(file) => uploadAudio(file, t.submission.id)}
+        />
+
+        {t.submission.submission_image && <span className="text-xs text-teal">✓ صورة</span>}
+        {t.submission.submission_audio && <span className="text-xs text-teal">✓ صوت</span>}
+      </div>
+    );
   }
 
   if (loading) return <p className="text-center text-navy/60">جاري التحميل...</p>;
@@ -227,7 +306,7 @@ export default function StudentTasksPage() {
 
           if (!isDaily) {
             return (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="mt-3">
                 <button
                   onClick={() => markDoneOnce(t.submission.id, t.points)}
                   disabled={busyKey === t.submission.id}
@@ -235,21 +314,7 @@ export default function StudentTasksPage() {
                 >
                   ✅ تم الإنجاز
                 </button>
-                <label className="focus-ring cursor-pointer rounded-full border-2 border-teal px-4 py-2 text-sm font-bold text-teal transition hover:bg-teal-light">
-                  📎 رفع صورة (اختياري)
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) uploadSubmissionImage(file, t.submission.id);
-                    }}
-                  />
-                </label>
-                {t.submission.submission_image && (
-                  <span className="text-sm text-teal">✓ تم رفع صورة</span>
-                )}
+                <AttachmentControls t={t} />
               </div>
             );
           }
@@ -298,6 +363,7 @@ export default function StudentTasksPage() {
               <p className="mt-2 text-xs text-navy/60">
                 🟢 اليوم · 🟡 تعويض يوم سابق · ⚪ مستقبل (مقفل)
               </p>
+              <AttachmentControls t={t} />
             </div>
           );
         }}
@@ -406,4 +472,4 @@ function TaskSection({
       )}
     </section>
   );
-}
+              }
